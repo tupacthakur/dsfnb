@@ -1,0 +1,1297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 1 — AUTH & USERS
+// ═══════════════════════════════════════════════════
+
+model User {
+  id             String        @id @default(cuid())
+  name           String
+  email          String        @unique
+  passwordHash   String
+  role           UserRole      @default(ADMIN)
+  avatarInitials String?
+  explainDepth   ExplainDepth  @default(HEADLINE_ACTION)
+  isOnboarded    Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  // Relations
+  sessions          AuthSession[]
+  chatSessions      ChatSession[]
+  apiKeys           ApiKey[]
+  modelEndpoints    ModelEndpoint[]
+  ingestionLogs     IngestionLog[]
+  reports           Report[]
+  recommendations   Recommendation[]
+  onboardingAnswers OnboardingAnswer[]
+  tigConstraints    TIGConstraint[]
+  tigExceptions     TIGException[]
+  regimeEvents      RegimeEvent[]
+  activityLogs      ActivityLog[]
+  alertRoutes       AlertRoute[]
+}
+
+enum UserRole {
+  ADMIN
+  OPS_HEAD
+  OUTLET_MANAGER
+  FINANCE
+  VIEWER
+}
+
+enum ExplainDepth {
+  HEADLINE_ONLY
+  HEADLINE_ACTION
+  FULL_CONFIDENCE
+  FULL_DETAIL
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 2 — TIER 1 DATA: PRODUCT MASTER
+// Koravo Universal Data Standards — Domain 2
+// ═══════════════════════════════════════════════════
+
+model Product {
+  id                String         @id @default(cuid())
+  sku               String         @unique
+  name              String
+  category          ProductCategory
+  subCategory       String?
+  baseCostPaise     Int
+  sellingPricePaise Int
+  uom               String
+  shelfLifeDays     Int?
+  isHeroSku         Boolean        @default(false)
+  isLossLeader      Boolean        @default(false)
+  ingredientTier    IngredientTier @default(TIER_A)
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  deletedAt         DateTime?
+
+  // Relations
+  salesItems        SalesItem[]
+  inventoryRecords  InventoryRecord[]
+  procurementItems  ProcurementItem[]
+  returnItems       ReturnItem[]
+  wasteRecords      WasteRecord[]
+  recipeIngredients RecipeIngredient[]
+  tigConstraints    TIGConstraint[]
+  insightRefs       InsightDataRef[]
+}
+
+enum ProductCategory {
+  BAKERY
+  BEVERAGES
+  DAIRY
+  GRAINS
+  OILS_FATS
+  SPECIALTY
+  PERISHABLE
+  DRY_GOODS
+  OTHER
+}
+
+enum IngredientTier {
+  TIER_A
+  TIER_B
+  TIER_C
+  LOW_TIER
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 3 — TIER 1 DATA: LOCATIONS & OUTLETS
+// ═══════════════════════════════════════════════════
+
+model Location {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  name         String
+  type         LocationType
+  city         String
+  region       String?
+  state        String?
+  country      String       @default("IN")
+  latitude     Decimal?     @db.Decimal(10, 7)
+  longitude    Decimal?     @db.Decimal(10, 7)
+  priorityTier PriorityTier @default(STANDARD)
+  outletFormat OutletFormat @default(STANDALONE)
+  isRampUp     Boolean      @default(false)
+  rampUpEndsAt DateTime?
+  peerGroupId  String?
+  rentMonthlyPaise Int?
+  marginFloorPct   Decimal? @db.Decimal(5, 4)
+  isActive         Boolean  @default(true)
+  openedAt         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  salesTransactions SalesTransaction[]
+  inventoryRecords  InventoryRecord[]
+  procurements      Procurement[]
+  orderFulfilments  OrderFulfilment[]
+  returnRecords     ReturnRecord[]
+  wasteRecords      WasteRecord[]
+  tigConstraints    TIGConstraint[]
+  deviations        Deviation[]
+  regionalCalendars SeasonalityCalendar[]
+}
+
+enum LocationType {
+  OUTLET
+  WAREHOUSE
+  PRODUCTION_KITCHEN
+  KIOSK
+  DARK_KITCHEN
+}
+
+enum PriorityTier {
+  CRITICAL
+  STANDARD
+  MONITORED
+}
+
+enum OutletFormat {
+  FLAGSHIP
+  KIOSK
+  SATELLITE
+  STANDALONE
+  MALL
+  TRANSIT
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 4 — TIER 1 DATA: SALES TRANSACTIONS
+// ═══════════════════════════════════════════════════
+
+model SalesTransaction {
+  id               String          @id @default(cuid())
+  transactionCode  String          @unique
+  locationId       String
+  channel          SalesChannel
+  totalAmountPaise Int
+  discountPaise    Int             @default(0)
+  discountPct      Decimal         @db.Decimal(5, 4) @default(0)
+  isCampaign       Boolean         @default(false)
+  campaignId       String?
+  transactionType  TransactionType @default(SALE)
+  paymentStatus    PaymentStatus   @default(COMPLETED)
+  externalRef      String?
+  transactedAt     DateTime
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  ingestionLogId   String?
+
+  // Relations
+  location Location     @relation(fields: [locationId], references: [id])
+  items    SalesItem[]
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+
+  @@index([locationId, transactedAt])
+  @@index([channel, transactedAt])
+  @@index([transactedAt])
+}
+
+model SalesItem {
+  id                 String  @id @default(cuid())
+  salesTransactionId String
+  productId          String
+  quantitySold       Decimal @db.Decimal(10, 3)
+  unitPricePaise     Int
+  totalLinePaise     Int
+  discountPct        Decimal @db.Decimal(5, 4) @default(0)
+  costAtTimePaise    Int?
+
+  salesTransaction SalesTransaction @relation(fields: [salesTransactionId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([salesTransactionId])
+}
+
+enum SalesChannel {
+  DIRECT
+  ECOMMERCE
+  GENERAL_TRADE
+  MODERN_TRADE
+  MARKETPLACE
+  SUBSCRIPTION
+  WHOLESALE
+}
+
+enum TransactionType {
+  SALE
+  RETURN
+  EXCHANGE
+  VOID
+  ADJUSTMENT
+}
+
+enum PaymentStatus {
+  COMPLETED
+  PENDING
+  OVERDUE
+  DISPUTED
+  WRITTEN_OFF
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 5 — TIER 1 DATA: INVENTORY
+// ═══════════════════════════════════════════════════
+
+model InventoryRecord {
+  id                    String          @id @default(cuid())
+  productId             String
+  locationId            String
+  warehouseCode         String?
+  batchId               String?
+  currentStockQty       Decimal         @db.Decimal(10, 3)
+  openingStockQty       Decimal?        @db.Decimal(10, 3)
+  stockInDate           DateTime
+  expiryDate            DateTime?
+  manufacturedDate      DateTime?
+  shelfLifeRemainingPct Decimal?        @db.Decimal(5, 4)
+  costPerUnitPaise      Int?
+  totalValuePaise       Int?
+  inventoryTurnoverRate Decimal?        @db.Decimal(8, 4)
+  isNearExpiry          Boolean         @default(false)
+  isSlowMoving          Boolean         @default(false)
+  supplierName          String?
+  status                InventoryStatus @default(AVAILABLE)
+  ingestedFlag          String?
+  ingestionLogId        String?
+  recordedAt            DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  // Relations
+  product   Product       @relation(fields: [productId], references: [id])
+  location  Location      @relation(fields: [locationId], references: [id])
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+  wasteRecords WasteRecord[]
+  transfers    StockTransfer[]
+
+  @@index([productId, locationId])
+  @@index([expiryDate])
+  @@index([locationId])
+}
+
+enum InventoryStatus {
+  AVAILABLE
+  RESERVED
+  IN_TRANSIT
+  QUARANTINE
+  NEAR_EXPIRY
+  EXPIRED
+  DAMAGED
+  WRITTEN_OFF
+}
+
+model StockTransfer {
+  id                  String         @id @default(cuid())
+  inventoryRecordId   String
+  fromLocationId      String
+  toLocationId        String
+  quantityTransferred Decimal        @db.Decimal(10, 3)
+  reason              String?
+  isNearExpiryMove    Boolean        @default(false)
+  loggedVia           String?
+  status              TransferStatus @default(PENDING)
+  initiatedBy         String?
+  confirmedBy         String?
+  transferredAt       DateTime
+  createdAt           DateTime       @default(now())
+
+  inventoryRecord InventoryRecord @relation(fields: [inventoryRecordId], references: [id])
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  DISPUTED
+  CANCELLED
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 6 — TIER 1 DATA: PROCUREMENT
+// ═══════════════════════════════════════════════════
+
+model Supplier {
+  id               String           @id @default(cuid())
+  name             String
+  platform         String?
+  classification   VendorClass      @default(CONDITIONAL)
+  geographyTag     String?
+  distanceKm       Int?
+  isLocalSource    Boolean          @default(false)
+  importRatioPct   Decimal?         @db.Decimal(5, 4)
+  incidentHistory  Json?
+  onboardingStatus OnboardingStatus @default(TRIAL)
+  trialStartedAt   DateTime?
+  trialEndsAt      DateTime?
+  approvedAt       DateTime?
+  lastAuditAt      DateTime?
+  lastAuditOk      Boolean?
+  contactInfo      Json?
+  contractTerms    Json?
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  deletedAt        DateTime?
+
+  procurements     Procurement[]
+  procurementItems ProcurementItem[]
+  apiKeys          ApiKey[]
+}
+
+enum VendorClass {
+  APPROVED
+  CONDITIONAL
+  PROHIBITED
+  TRIAL
+  SUSPENDED
+  UNDEFINED
+}
+
+enum OnboardingStatus {
+  TRIAL
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+model Procurement {
+  id             String        @id @default(cuid())
+  locationId     String
+  supplierId     String
+  purchaseDate   DateTime
+  totalPaise     Int
+  invoiceRef     String?
+  paymentStatus  PaymentStatus @default(PENDING)
+  paymentDueDate DateTime?
+  paidAt         DateTime?
+  daysOverdue    Int?
+  notes          String?
+  ingestionLogId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  location  Location      @relation(fields: [locationId], references: [id])
+  supplier  Supplier      @relation(fields: [supplierId], references: [id])
+  items     ProcurementItem[]
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+
+  @@index([supplierId, purchaseDate])
+  @@index([paymentStatus])
+}
+
+model ProcurementItem {
+  id                String   @id @default(cuid())
+  procurementId     String
+  productId         String
+  supplierId        String
+  quantityPurchased Decimal  @db.Decimal(10, 3)
+  unitCostPaise     Int
+  totalLinePaise    Int
+  batchRef          String?
+  qualityGrade      IngredientTier?
+  grn_passed        Boolean @default(true)
+  grnNotes          String?
+
+  procurement Procurement @relation(fields: [procurementId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id])
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 7 — TIER 2 DATA: ORDER FULFILMENT
+// ═══════════════════════════════════════════════════
+
+model OrderFulfilment {
+  id                   String           @id @default(cuid())
+  orderCode            String           @unique
+  locationId           String
+  channel              SalesChannel
+  customerId           String?
+  region               String?
+  quantityOrdered      Decimal          @db.Decimal(10, 3)
+  quantityDelivered    Decimal?         @db.Decimal(10, 3)
+  fulfilmentRatePct    Decimal?         @db.Decimal(5, 4)
+  status               FulfilmentStatus @default(PENDING)
+  isPartialDelivery    Boolean          @default(false)
+  isIntentionalPartial Boolean          @default(false)
+  prepTimeMinutes      Int?
+  dispatchedAt         DateTime?
+  deliveredAt          DateTime?
+  poReceivedAt         DateTime?
+  confirmedWithinHrs   Decimal?         @db.Decimal(5, 2)
+  slaBreached          Boolean          @default(false)
+  ingestionLogId       String?
+  orderedAt            DateTime
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  location  Location      @relation(fields: [locationId], references: [id])
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+
+  @@index([locationId, orderedAt])
+  @@index([status])
+}
+
+enum FulfilmentStatus {
+  PENDING
+  CONFIRMED
+  DISPATCHED
+  DELIVERED
+  PARTIAL
+  CANCELLED
+  FAILED
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 8 — TIER 2 DATA: RETURNS & WASTAGE
+// ═══════════════════════════════════════════════════
+
+model ReturnRecord {
+  id             String    @id @default(cuid())
+  locationId     String
+  channel        SalesChannel?
+  returnDate     DateTime
+  totalLossPaise Int
+  isVerified     Boolean   @default(false)
+  verifiedBy     String?
+  ingestionLogId String?
+  createdAt      DateTime  @default(now())
+
+  location  Location      @relation(fields: [locationId], references: [id])
+  items     ReturnItem[]
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+}
+
+model ReturnItem {
+  id               String       @id @default(cuid())
+  returnRecordId   String
+  productId        String
+  quantityReturned Decimal      @db.Decimal(10, 3)
+  reasonCode       ReturnReason
+  lossPaise        Int
+  isQualityAlert   Boolean      @default(false)
+  escalatedAt      DateTime?
+  batchRef         String?
+  notes            String?
+
+  returnRecord ReturnRecord @relation(fields: [returnRecordId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+}
+
+enum ReturnReason {
+  NEAR_EXPIRY
+  WRONG_ITEM
+  QUALITY_COMPLAINT
+  BUYER_REMORSE
+  DAMAGED_IN_TRANSIT
+  OVERSTOCK
+  OTHER
+}
+
+model WasteRecord {
+  id                 String       @id @default(cuid())
+  locationId         String
+  productId          String
+  inventoryRecordId  String?
+  wasteDate          DateTime
+  quantityWasted     Decimal      @db.Decimal(10, 3)
+  batchQtyProduced   Decimal?     @db.Decimal(10, 3)
+  wastePct           Decimal?     @db.Decimal(5, 4)
+  financialLossPaise Int
+  damageReason       DamageReason
+  isIntentionalReject Boolean     @default(false)
+  warehouseCode      String?
+  notes              String?
+  ingestionLogId     String?
+  recordedAt         DateTime     @default(now())
+
+  location        Location         @relation(fields: [locationId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id])
+  inventoryRecord InventoryRecord? @relation(fields: [inventoryRecordId], references: [id])
+  ingestion       IngestionLog?    @relation(fields: [ingestionLogId], references: [id])
+
+  @@index([locationId, wasteDate])
+  @@index([damageReason])
+}
+
+enum DamageReason {
+  PEST_DAMAGE
+  EXPIRED_IN_WAREHOUSE
+  TRANSIT_DAMAGE
+  PRODUCTION_BREAKAGE
+  OVERORDERING
+  IMPROPER_STORAGE
+  QUALITY_REJECTION
+  SUPPLIER_FAULT
+  UNKNOWN
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 9 — TIER 2 DATA: OPERATIONAL COSTS
+// ═══════════════════════════════════════════════════
+
+model OperationalCost {
+  id             String       @id @default(cuid())
+  locationId     String?
+  date           DateTime
+  category       CostCategory
+  department     String?
+  amountPaise    Int
+  description    String?
+  ingestionLogId String?
+  createdAt      DateTime     @default(now())
+
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+}
+
+enum CostCategory {
+  LABOR
+  RENT
+  UTILITIES
+  MARKETING
+  PACKAGING
+  MAINTENANCE
+  LOGISTICS
+  ADMIN
+  OTHER
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 10 — TIER 2 DATA: PROMOTIONS & CAMPAIGNS
+// ═══════════════════════════════════════════════════
+
+model Campaign {
+  id              String       @id @default(cuid())
+  name            String
+  type            CampaignType
+  channel         SalesChannel?
+  discountType    String
+  discountPct     Decimal?     @db.Decimal(5, 4)
+  discountPaise   Int?
+  appliesTo       Json?
+  startDate       DateTime
+  endDate         DateTime
+  isPlanned       Boolean      @default(true)
+  revenueLiftPct  Decimal?     @db.Decimal(5, 4)
+  actualLiftPct   Decimal?     @db.Decimal(5, 4)
+  priceRestoredAt DateTime?
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  salesTransactions SalesTransaction[]
+}
+
+enum CampaignType {
+  FESTIVE
+  CLEARANCE
+  COMPETITIVE_RESPONSE
+  FLASH
+  LOYALTY
+  PLATFORM_EVENT
+  LOCAL
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 11 — RECIPES (Bill of Materials)
+// ═══════════════════════════════════════════════════
+
+model Recipe {
+  id                       String   @id @default(cuid())
+  productId                String   @unique
+  schemaVersion            Int      @default(1)
+  versionNote              String?
+  isDocumented             Boolean  @default(false)
+  isIntentionallyUndocumented Boolean @default(false)
+  lastVerifiedAt           DateTime?
+  documentedBy             String?
+  yieldQty                 Decimal? @db.Decimal(10, 3)
+  yieldUom                 String?
+  prepTimeMinutes          Int?
+  isLongFerment            Boolean  @default(false)
+  fermentHours             Int?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  product     Product           @relation(fields: [productId], references: [id])
+  ingredients RecipeIngredient[]
+  versions    RecipeVersion[]
+}
+
+model RecipeIngredient {
+  id               String  @id @default(cuid())
+  recipeId         String
+  productId        String
+  quantity         Decimal @db.Decimal(10, 4)
+  uom              String
+  isCritical       Boolean @default(false)
+  canSubstitute    Boolean @default(false)
+  substituteNotes  String?
+
+  recipe  Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model RecipeVersion {
+  id         String   @id @default(cuid())
+  recipeId   String
+  version    Int
+  changedBy  String
+  changeNote String?
+  snapshot   Json
+  createdAt  DateTime @default(now())
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 12 — TIG (TEMPORAL INTELLIGENCE GRAPH)
+// ═══════════════════════════════════════════════════
+
+model TIGConstraint {
+  id             String              @id @default(cuid())
+  userId         String
+  nodeType       TIGNodeType
+  label          String
+  description    String?
+  scope          TIGScope           @default(UNIVERSAL)
+  locationId     String?
+  productId      String?
+  channel        SalesChannel?
+  category       ProductCategory?
+  thresholdValue Decimal?           @db.Decimal(12, 4)
+  thresholdPct   Decimal?           @db.Decimal(5, 4)
+  comparisonOp   String?
+  stringValue    String?
+  jsonValue      Json?
+  weightNormal   ConstraintWeight   @default(HIGH)
+  weightSupplyShock ConstraintWeight @default(MEDIUM)
+  weightDemandShock ConstraintWeight @default(HIGH)
+  weightCompetitive ConstraintWeight @default(HIGH)
+  weightRecovery  ConstraintWeight  @default(MEDIUM)
+  isRegimeImmune Boolean           @default(false)
+  status         TIGConstraintStatus @default(ACTIVE)
+  isHardConstraint Boolean         @default(false)
+  schemaVersion  Int               @default(1)
+  validFrom      DateTime          @default(now())
+  validTo        DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id])
+  location   Location?  @relation(fields: [locationId], references: [id])
+  product    Product?   @relation(fields: [productId], references: [id])
+  deviations Deviation[]
+  exceptions TIGException[]
+  checkLogs  TIGCheckLog[]
+}
+
+enum TIGNodeType {
+  BRAND_POSITIONING
+  INGREDIENT_GRADE
+  DISCOUNT_CAP
+  MARGIN_DEFINITION
+  WASTE_TOLERANCE
+  SHRINKAGE_METRIC
+  VENDOR_CLASS
+  SERVICE_CEILING
+  QUALITY_STANDARD
+  RECIPE_BOM
+  REVENUE_AGGREGATE
+  DISCOUNT_POLICY
+  OUTLET_PRIORITY
+  REGIME_DETECTION
+}
+
+enum TIGScope {
+  UNIVERSAL
+  OUTLET
+  CHANNEL
+  CATEGORY
+  SKU
+  VENDOR
+  REGION
+}
+
+enum TIGConstraintStatus {
+  ACTIVE
+  SUPPRESSED
+  EXPLORATORY
+  DEPRECATED
+  PENDING_REVIEW
+}
+
+enum ConstraintWeight {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INACTIVE
+}
+
+model TIGException {
+  id            String          @id @default(cuid())
+  userId        String
+  constraintId  String
+  description   String
+  reasonCode    String
+  approvedBy    String
+  approvedAt    DateTime        @default(now())
+  expiresAt     DateTime
+  isPostHoc     Boolean         @default(false)
+  scope         Json?
+  renewalCount  Int             @default(0)
+  lastRenewedAt DateTime?
+  status        ExceptionStatus @default(ACTIVE)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  user       User          @relation(fields: [userId], references: [id])
+  constraint TIGConstraint @relation(fields: [constraintId], references: [id])
+}
+
+enum ExceptionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  RENEWED
+}
+
+model TIGCheckLog {
+  id              String      @id @default(cuid())
+  constraintId    String
+  checkResult     CheckResult
+  deviationId     String?
+  contextData     Json?
+  confidenceScore Decimal     @db.Decimal(5, 4)
+  regimeActive    String?
+  checkedAt       DateTime    @default(now())
+
+  constraint TIGConstraint @relation(fields: [constraintId], references: [id])
+}
+
+enum CheckResult {
+  HEALTHY
+  VIOLATED
+  SUPPRESSED
+  EXPLORATORY
+  INCONCLUSIVE
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 13 — DEVIATIONS
+// ═══════════════════════════════════════════════════
+
+model Deviation {
+  id                   String           @id @default(cuid())
+  constraintId         String
+  locationId           String?
+  severity             DeviationSeverity
+  title                String
+  description          String           @db.Text
+  detectedValue        Decimal?         @db.Decimal(12, 4)
+  thresholdValue       Decimal?         @db.Decimal(12, 4)
+  financialImpactPaise Int?
+  status               DeviationStatus  @default(OPEN)
+  isCoupled            Boolean          @default(false)
+  coupledIds           String[]
+  regimeContext        String?
+  resolvedAt           DateTime?
+  resolvedBy           String?
+  resolutionNote       String?
+  detectedAt           DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  constraint      TIGConstraint   @relation(fields: [constraintId], references: [id])
+  location        Location?       @relation(fields: [locationId], references: [id])
+  recommendations Recommendation[]
+}
+
+enum DeviationSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  EXPLORATORY
+}
+
+enum DeviationStatus {
+  OPEN
+  ACKNOWLEDGED
+  INVESTIGATING
+  RESOLVED
+  SUPPRESSED
+  FALSE_POSITIVE
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 14 — REGIME EVENTS
+// ═══════════════════════════════════════════════════
+
+model RegimeEvent {
+  id             String       @id @default(cuid())
+  userId         String
+  regimeType     RegimeType
+  detectedAt     DateTime     @default(now())
+  confirmedAt    DateTime?
+  confirmedBy    String?
+  rejectedAt     DateTime?
+  status         RegimeStatus @default(PENDING_CONFIRMATION)
+  triggerSignals Json
+  weightOverrides Json?
+  validFrom      DateTime?
+  reviewDueAt    DateTime?
+  resolvedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+enum RegimeType {
+  SUPPLY_SHOCK
+  DEMAND_SHOCK
+  COMPETITIVE_PRESSURE
+  RECOVERY_PHASE
+  STRUCTURAL_CHANGE
+  NORMAL
+}
+
+enum RegimeStatus {
+  PENDING_CONFIRMATION
+  ACTIVE
+  REJECTED
+  EXPIRED
+  RESOLVED
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 15 — TIG ONBOARDING (50 Questions)
+// ═══════════════════════════════════════════════════
+
+model OnboardingAnswer {
+  id              String      @id @default(cuid())
+  userId          String
+  questionId      String
+  questionSection String
+  answer          Json
+  rawText         String?     @db.Text
+  tigNodeType     TIGNodeType?
+  biasStatuses    Json?
+  isVerified      Boolean     @default(false)
+  requiresReview  Boolean     @default(false)
+  reviewNote      String?
+  answeredAt      DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 16 — SAGE MEMORY (Mem0 persistence)
+// ═══════════════════════════════════════════════════
+
+model SAGEEntity {
+  id         String     @id @default(cuid())
+  userId     String
+  entityType EntityType
+  entityKey  String
+  label      String
+  properties Json
+  lastSeenAt DateTime   @default(now())
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  memories SAGEMemory[]
+
+  @@unique([userId, entityKey])
+}
+
+enum EntityType {
+  SKU
+  OUTLET
+  SUPPLIER
+  CUSTOMER
+  CHANNEL
+  CATEGORY
+  RECIPE
+}
+
+model SAGEMemory {
+  id             String     @id @default(cuid())
+  entityId       String
+  memoryType     MemoryType
+  content        String     @db.Text
+  confidence     Decimal    @db.Decimal(5, 4)
+  source         String
+  reinforceCount Int        @default(1)
+  lastReinforced DateTime   @default(now())
+  expiresAt      DateTime?
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+
+  entity SAGEEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@index([entityId, memoryType])
+}
+
+enum MemoryType {
+  SEASONAL_PATTERN
+  SUPPLIER_BEHAVIOUR
+  SKU_PERFORMANCE
+  OUTLET_PATTERN
+  USER_PREFERENCE
+  CONSTRAINT_HISTORY
+  REGIME_HISTORY
+  ANOMALY_PATTERN
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 17 — SAGE INSIGHT CARDS
+// ═══════════════════════════════════════════════════
+
+model InsightCard {
+  id                 String          @id @default(cuid())
+  userId             String
+  title              String
+  body               String          @db.Text
+  category           InsightCategory
+  severity           DeviationSeverity
+  confidenceScore    Decimal         @db.Decimal(5, 4)
+  regimeContext      String?
+  constraintStatuses Json
+  recommendedAction  String?         @db.Text
+  approverRequired   Boolean         @default(false)
+  dspyProgramUsed    String?
+  langGraphRunId     String?
+  graphRagQueryId    String?
+  contextBriefingRaw Json?
+  llmEndpointUsed    String?
+  llmModelName       String?
+  status             InsightStatus   @default(NEW)
+  actionedAt         DateTime?
+  dismissedAt        DateTime?
+  ingestionLogId     String?
+  chatSessionId      String?
+  generatedAt        DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  dataSources  InsightDataRef[]
+  deviationRef Deviation?    @relation(fields: [id], references: [id])
+  ingestion    IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+}
+
+enum InsightCategory {
+  REVENUE
+  MARGIN
+  WASTE
+  VENDOR
+  QUALITY
+  FULFILMENT
+  REGIME
+  INVENTORY
+  DISCOUNT
+  COMPLIANCE
+}
+
+enum InsightStatus {
+  NEW
+  ACTIONED
+  DISMISSED
+  EXPIRED
+  ESCALATED
+}
+
+model InsightDataRef {
+  id             String  @id @default(cuid())
+  insightCardId  String
+  sourceType     String
+  sourceLabel    String
+  productId      String?
+  ingestionLogId String?
+
+  insightCard InsightCard @relation(fields: [insightCardId], references: [id], onDelete: Cascade)
+  product     Product?    @relation(fields: [productId], references: [id])
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 18 — CHAT SESSIONS
+// ═══════════════════════════════════════════════════
+
+model ChatSession {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String?
+  modelEndpointId String?
+  modelName       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+  context  ChatContext[]
+}
+
+model ChatMessage {
+  id              String   @id @default(cuid())
+  chatSessionId   String
+  role            String
+  content         String   @db.Text
+  reasoningTrace  String?  @db.Text
+  contextBriefing Json?
+  insightCardId   String?
+  confidenceScore Decimal? @db.Decimal(5, 4)
+  tokenCount      Int?
+  latencyMs       Int?
+  createdAt       DateTime @default(now())
+
+  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+}
+
+model ChatContext {
+  id            String   @id @default(cuid())
+  chatSessionId String
+  type          String
+  refId         String
+  label         String
+  attachedAt    DateTime @default(now())
+
+  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 19 — INGESTION LOGS
+// ═══════════════════════════════════════════════════
+
+model IngestionLog {
+  id             String           @id @default(cuid())
+  userId         String
+  filename       String?
+  sourceType     IngestionSource
+  rowCount       Int?
+  columnNames    String[]
+  tier1Fields    String[]
+  tier2Fields    String[]
+  unknownFields  String[]
+  fieldMappings  Json?
+  fileSizeBytes  Int?
+  smartDefaults  String[]
+  status         IngestionStatus  @default(PROCESSING)
+  errorMessage   String?
+  sageRunId      String?
+  processedAt    DateTime?
+  uploadedAt     DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id])
+  salesTransactions SalesTransaction[]
+  inventoryRecords  InventoryRecord[]
+  procurements      Procurement[]
+  orderFulfilments  OrderFulfilment[]
+  returnRecords     ReturnRecord[]
+  wasteRecords      WasteRecord[]
+  operationalCosts  OperationalCost[]
+  insightCards      InsightCard[]
+  recommendations   Recommendation[]
+}
+
+enum IngestionSource {
+  CSV_UPLOAD
+  XLSX_UPLOAD
+  API_PULL
+  POS_SYNC
+  MANUAL_ENTRY
+  OCR_INVOICE
+  WEBHOOK
+}
+
+enum IngestionStatus {
+  PROCESSING
+  VALIDATING
+  SAGE_RUNNING
+  COMPLETE
+  FAILED
+  PARTIAL
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 20 — RECOMMENDATIONS
+// ═══════════════════════════════════════════════════
+
+model Recommendation {
+  id             String               @id @default(cuid())
+  userId         String
+  title          String
+  body           String               @db.Text
+  category       InsightCategory
+  impact         ImpactLevel
+  source         String
+  constraintRef  String?
+  deviationId    String?
+  dspyProgram    String?
+  status         RecommendationStatus @default(NEW)
+  ingestionLogId String?
+  expiresAt      DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id])
+  deviation Deviation?    @relation(fields: [deviationId], references: [id])
+  ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
+}
+
+enum ImpactLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RecommendationStatus {
+  NEW
+  IN_PROGRESS
+  APPLIED
+  DISMISSED
+  EXPIRED
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 21 — SEASONALITY CALENDARS
+// ═══════════════════════════════════════════════════
+
+model SeasonalityCalendar {
+  id               String   @id @default(cuid())
+  userId           String
+  locationId       String?
+  region           String?
+  label            String
+  calendarType     String
+  isNaturalDemand  Boolean  @default(true)
+  startDate        DateTime
+  endDate          DateTime
+  revenueImpactPct Decimal? @db.Decimal(5, 4)
+  supplyImpactPct  Decimal? @db.Decimal(5, 4)
+  isRecurringAnnual Boolean @default(true)
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  location Location? @relation(fields: [locationId], references: [id])
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 22 — REPORTS & ACTIVITY
+// ═══════════════════════════════════════════════════
+
+model Report {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  summary     String   @db.Text
+  modelUsed   String?
+  periodStart DateTime?
+  periodEnd   DateTime?
+  kpiSnapshot Json?
+  exportUrl   String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  type        String
+  description String
+  metadata    Json?
+  severity    String   @default("info")
+  locationId  String?
+  createdAt   DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+// ═══════════════════════════════════════════════════
+// SECTION 23 — ENDPOINTS & API KEYS
+// ═══════════════════════════════════════════════════
+
+model ModelEndpoint {
+  id            String   @id @default(cuid())
+  userId        String?
+  componentType String
+  label         String
+  url           String
+  encryptedKey  String?  @db.Text
+  modelName     String?
+  isActive      Boolean  @default(true)
+  lastPingMs    Int?
+  lastPingOk    Boolean?
+  testedAt      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model ApiKey {
+  id           String   @id @default(cuid())
+  userId       String
+  supplierId   String?
+  label        String
+  platform     String
+  encryptedKey String   @db.Text
+  webhookUrl   String?
+  scopes       String[]
+  isActive     Boolean  @default(true)
+  lastTestedAt DateTime?
+  lastTestOk   Boolean?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+}
+
+model AlertRoute {
+  id           String   @id @default(cuid())
+  userId       String
+  alertType    String
+  channel      String
+  recipientRef String
+  delayMinutes Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
