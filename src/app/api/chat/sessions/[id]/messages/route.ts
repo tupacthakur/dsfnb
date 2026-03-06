@@ -5,9 +5,15 @@ import { buildContextBriefing } from "@/lib/sage/client";
 import { narrateBriefing } from "@/lib/ai";
 import { ok, errorResponse, validationError } from "@/lib/api/response";
 
-const prisma = new PrismaClient();
+function getPrisma() {
+  try {
+    return new PrismaClient();
+  } catch {
+    return null;
+  }
+}
 
-async function resolveUserId(): Promise<string | null> {
+async function resolveUserId(prisma: PrismaClient): Promise<string | null> {
   const user = await prisma.user.findFirst({
     orderBy: { createdAt: "asc" },
   });
@@ -21,9 +27,20 @@ export async function POST(
   const { id } = await context.params;
   const requestId = req.headers.get("x-request-id") ?? undefined;
 
+  const prisma = getPrisma();
+  if (!prisma) {
+    return errorResponse(
+      503,
+      "DB_UNAVAILABLE",
+      "Database not initialized. Run: npx prisma generate",
+      null,
+      requestId,
+    );
+  }
+
   let userId: string | null;
   try {
-    userId = await resolveUserId();
+    userId = await resolveUserId(prisma);
   } catch (err) {
     return errorResponse(
       500,
@@ -152,15 +169,30 @@ export async function POST(
       assistantContent = narration.content;
       trace = briefing.metadata;
       confidence = briefing.confidence;
-    } catch {
-      await prisma.activityLog.create({
-        data: {
-          userId,
-          type: "error",
-          description: "SAGE or LLM narration failed during chat",
-          severity: "error",
-        },
-      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("No narration endpoint") || msg.includes("No LLM")) {
+        assistantContent =
+          "Chat LLM is not configured. Set DEFAULT_CHAT_LLM_KEY (and optionally DEFAULT_CHAT_LLM_URL) in .env.local to use an OpenAI-compatible API.";
+      } else if (msg.includes("401") || msg.includes("Unauthorized")) {
+        assistantContent =
+          "Invalid API key for the chat LLM. Check DEFAULT_CHAT_LLM_KEY in .env.local.";
+      } else if (!assistantContent || assistantContent === "SAGE is unavailable at the moment.") {
+        assistantContent =
+          "I couldn’t complete that request. SAGE or the LLM may be unavailable. Check your LLM URL and key in Settings or .env.local.";
+      }
+      try {
+        await prisma.activityLog.create({
+          data: {
+            userId,
+            type: "error",
+            description: "SAGE or LLM narration failed during chat",
+            severity: "error",
+          },
+        });
+      } catch {
+        // ignore log failure
+      }
     }
 
     const assistantMessage = await prisma.chatMessage.create({

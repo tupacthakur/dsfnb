@@ -50,9 +50,9 @@ export async function POST(req: NextRequest) {
       prisma.insightCard.findMany({
         where: {
           userId,
-          createdAt: { gte: from, lte: to },
+          generatedAt: { gte: from, lte: to },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { generatedAt: "desc" },
         take: 50,
       }),
       prisma.recommendation.findMany({
@@ -79,31 +79,34 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
+    const kpiSnapshot = {
+      generatedAt: now.toISOString(),
+      promptId: body.promptId ?? null,
+      insightCount: insights.length,
+      recommendationCount: recommendations.length,
+      chatSessionCount: chats.length,
+      highlights: insights.slice(0, 5).map((i) => ({
+        id: i.id,
+        title: i.title,
+        severity: i.severity,
+        generatedAt: i.generatedAt,
+      })),
+      recommendations: recommendations.slice(0, 5).map((r) => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        impact: r.impact,
+      })),
+    };
+
     const report = await prisma.report.create({
       data: {
         userId,
         title: body.title ?? "Operations Intelligence Summary",
+        summary: `Report covering ${insights.length} insights, ${recommendations.length} recommendations, ${chats.length} chat sessions.`,
         periodStart: from,
         periodEnd: to,
-        payload: {
-          generatedAt: now.toISOString(),
-          promptId: body.promptId ?? null,
-          insightCount: insights.length,
-          recommendationCount: recommendations.length,
-          chatSessionCount: chats.length,
-          highlights: insights.slice(0, 5).map((i) => ({
-            id: i.id,
-            title: i.title,
-            severity: i.severity,
-            createdAt: i.createdAt,
-          })),
-          recommendations: recommendations.slice(0, 5).map((r) => ({
-            id: r.id,
-            title: r.title,
-            status: r.status,
-            impactScore: r.impactScore,
-          })),
-        },
+        kpiSnapshot: JSON.parse(JSON.stringify(kpiSnapshot)),
       },
     });
 

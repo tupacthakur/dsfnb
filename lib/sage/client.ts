@@ -321,79 +321,98 @@ export async function buildContextBriefing(params: {
   query?: string;
 }): Promise<ContextBriefing> {
   const { userId, dataContext, taskType, query } = params;
+  const userQuery = query ?? '';
 
-  const dspyProgram: DSPyProgram =
-    taskType === 'chat'
-      ? 'RecommendationGenerator'
-      : taskType === 'analysis'
-        ? 'MarginAnalysis'
-        : 'RegimeShiftDetection';
+  try {
+    const dspyProgram: DSPyProgram =
+      taskType === 'chat'
+        ? 'RecommendationGenerator'
+        : taskType === 'analysis'
+          ? 'MarginAnalysis'
+          : 'RegimeShiftDetection';
 
-  const dspyResult = await runDSPyProgram({
-    program: dspyProgram,
-    input: {
-      dataContext,
-      query,
-    },
-    userId,
-  });
+    const dspyResult = await runDSPyProgram({
+      program: dspyProgram,
+      input: {
+        dataContext,
+        query: userQuery,
+      },
+      userId,
+    });
 
-  const graphResult = await callGraphRAG({
-    query: query ?? '',
-    entities: [],
-    userId,
-  });
+    const graphResult = await callGraphRAG({
+      query: userQuery,
+      entities: [],
+      userId,
+    });
 
-  const memories = await readMem0({
-    entityKey: `USER:${userId}`,
-    userId,
-  });
+    const memories = await readMem0({
+      entityKey: `USER:${userId}`,
+      userId,
+    });
 
-  const activeRegime = await detectActiveRegime(userId);
+    const activeRegime = await detectActiveRegime(userId);
 
-  const constraintContext: ConstraintCheckContext = {
-    // DataContext → constraint context mapping will be expanded per route;
-    // for now this is a minimal placeholder.
-  };
+    const constraintContext: ConstraintCheckContext = {};
 
-  const constraintResults = await checkConstraints({
-    userId,
-    context: constraintContext,
-    regimeType: activeRegime?.regimeType as any,
-  });
+    const constraintResults = await checkConstraints({
+      userId,
+      context: constraintContext,
+      regimeType: activeRegime?.regimeType as any,
+    });
 
-  const deviations: DeviationSignal[] = constraintResults
-    .filter((r) => r.status === 'VIOLATED')
-    .map((r) => ({
-      id: r.deviationId ?? r.constraintId,
-      title: r.details?.label
-        ? String(r.details.label)
-        : `Constraint violated: ${r.nodeType}`,
-      severity: r.effectiveWeight,
-      constraintId: r.constraintId,
-    }));
+    const deviations: DeviationSignal[] = constraintResults
+      .filter((r) => r.status === 'VIOLATED')
+      .map((r) => ({
+        id: r.deviationId ?? r.constraintId,
+        title: r.details?.label
+          ? String(r.details.label)
+          : `Constraint violated: ${r.nodeType}`,
+        severity: r.effectiveWeight,
+        constraintId: r.constraintId,
+      }));
 
-  const briefing: ContextBriefing = {
-    summary: (dspyResult.output.summary as string) ?? '',
-    deviations,
-    constraints: constraintResults,
-    recommendations: [],
-    regimeContext: activeRegime
-      ? { type: String(activeRegime.regimeType), eventId: activeRegime.id }
-      : null,
-    entities: [],
-    confidence: dspyResult.confidence,
-    metadata: {
-      dspyPrograms: [dspyProgram],
-      graphRagQueries: [query ?? ''],
-      mem0Entities: memories.map((m) => m.id),
-      langGraphRunId: '',
-    },
-  };
+    const briefing: ContextBriefing = {
+      summary: (dspyResult.output.summary as string) ?? '',
+      deviations,
+      constraints: constraintResults,
+      recommendations: [],
+      regimeContext: activeRegime
+        ? { type: String(activeRegime.regimeType), eventId: activeRegime.id }
+        : null,
+      entities: [],
+      confidence: dspyResult.confidence,
+      metadata: {
+        dspyPrograms: [dspyProgram],
+        graphRagQueries: [userQuery],
+        mem0Entities: memories.map((m) => m.id),
+        langGraphRunId: '',
+      },
+    };
 
-  void graphResult; // currently unused, reserved for future enrichment
-
-  return briefing;
+    void graphResult;
+    return briefing;
+  } catch {
+    // SAGE services not configured or failed: return a minimal briefing so the LLM can still answer
+    const summary = userQuery
+      ? `The operator asked: "${userQuery}". No SAGE data or analytics context is available. Respond conversationally as Koravo, focusing on general F&B operations, margins, waste, and best practices where relevant.`
+      : 'No query provided. Greet the operator and ask how you can help with F&B operations.';
+    return {
+      summary,
+      deviations: [],
+      constraints: [],
+      recommendations: [],
+      regimeContext: null,
+      entities: [],
+      confidence: 0.5,
+      metadata: {
+        dspyPrograms: [],
+        graphRagQueries: [userQuery],
+        mem0Entities: [],
+        langGraphRunId: '',
+      },
+    };
+  }
 }
 
 export { SAGEServiceError };

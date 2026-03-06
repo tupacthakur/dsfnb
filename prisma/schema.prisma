@@ -96,6 +96,7 @@ model Product {
   procurementItems  ProcurementItem[]
   returnItems       ReturnItem[]
   wasteRecords      WasteRecord[]
+  recipe            Recipe?
   recipeIngredients RecipeIngredient[]
   tigConstraints    TIGConstraint[]
   insightRefs       InsightDataRef[]
@@ -205,8 +206,9 @@ model SalesTransaction {
   ingestionLogId   String?
 
   // Relations
-  location Location     @relation(fields: [locationId], references: [id])
-  items    SalesItem[]
+  location  Location     @relation(fields: [locationId], references: [id])
+  campaign  Campaign?    @relation(fields: [campaignId], references: [id])
+  items     SalesItem[]
   ingestion IngestionLog? @relation(fields: [ingestionLogId], references: [id])
 
   @@index([locationId, transactedAt])
@@ -832,6 +834,7 @@ model Deviation {
 
   constraint      TIGConstraint   @relation(fields: [constraintId], references: [id])
   location        Location?       @relation(fields: [locationId], references: [id])
+  insightCard     InsightCard?
   recommendations Recommendation[]
 }
 

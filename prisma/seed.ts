@@ -169,36 +169,80 @@ async function main() {
 
   const productBySku = Object.fromEntries(products.map((p) => [p.sku, p]));
 
-  // 4. Suppliers
-  await Promise.all([
-    prisma.supplier.upsert({
-      where: { name: 'Mynte' },
-      update: {},
-      create: {
-        name: 'Mynte',
-        classification: 'APPROVED',
-        geographyTag: 'Mumbai',
+  // 4. Suppliers (create if not found by name)
+  for (const s of [
+    { name: 'Mynte', geographyTag: 'Mumbai' },
+    { name: 'Feedspan', geographyTag: 'Delhi' },
+    { name: 'Pixonyx', geographyTag: 'Pan-India' },
+  ]) {
+    const existing = await prisma.supplier.findFirst({ where: { name: s.name } });
+    if (!existing) {
+      await prisma.supplier.create({
+        data: { name: s.name, classification: 'APPROVED', geographyTag: s.geographyTag },
+      });
+    }
+  }
+
+  // 4b. Mock stats: sales, waste, order fulfilment (for KPI / metrics API)
+  const mockNow = new Date();
+  const sevenDaysAgo = new Date(mockNow.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  await prisma.salesItem.deleteMany({ where: { salesTransaction: { transactionCode: { startsWith: 'TXN-MOCK' } } } });
+  await prisma.salesTransaction.deleteMany({ where: { transactionCode: { startsWith: 'TXN-MOCK' } } });
+  await prisma.wasteRecord.deleteMany({
+    where: {
+      locationId: locMum.id,
+      productId: { in: [productBySku['SOUR-001'].id, productBySku['WB-001'].id, productBySku['EGG-001'].id] },
+      wasteDate: { gte: sevenDaysAgo },
+    },
+  });
+  await prisma.orderFulfilment.deleteMany({ where: { orderCode: { startsWith: 'ORD-MOCK' } } });
+
+  await prisma.salesTransaction.createMany({
+    data: [
+      { transactionCode: 'TXN-MOCK-001', locationId: locMum.id, channel: 'DIRECT', totalAmountPaise: 125000, discountPaise: 0, discountPct: 0, transactionType: 'SALE', paymentStatus: 'COMPLETED', transactedAt: new Date(mockNow.getTime() - 1 * 24 * 60 * 60 * 1000) },
+      { transactionCode: 'TXN-MOCK-002', locationId: locMum.id, channel: 'DIRECT', totalAmountPaise: 89000, discountPaise: 2000, discountPct: 0.022, transactionType: 'SALE', paymentStatus: 'COMPLETED', transactedAt: new Date(mockNow.getTime() - 2 * 24 * 60 * 60 * 1000) },
+      { transactionCode: 'TXN-MOCK-003', locationId: locMum.id, channel: 'ECOMMERCE', totalAmountPaise: 210000, discountPaise: 10000, discountPct: 0.045, transactionType: 'SALE', paymentStatus: 'COMPLETED', transactedAt: new Date(mockNow.getTime() - 3 * 24 * 60 * 60 * 1000) },
+      { transactionCode: 'TXN-MOCK-004', locationId: locMum.id, channel: 'DIRECT', totalAmountPaise: 67000, discountPaise: 0, discountPct: 0, transactionType: 'SALE', paymentStatus: 'COMPLETED', transactedAt: new Date(mockNow.getTime() - 5 * 24 * 60 * 60 * 1000) },
+      { transactionCode: 'TXN-MOCK-005', locationId: locMum.id, channel: 'DIRECT', totalAmountPaise: 156000, discountPaise: 5000, discountPct: 0.032, transactionType: 'SALE', paymentStatus: 'COMPLETED', transactedAt: sevenDaysAgo },
+    ],
+    skipDuplicates: true,
+  });
+
+  const salesTxns = await prisma.salesTransaction.findMany({ where: { transactionCode: { startsWith: 'TXN-MOCK' } }, orderBy: { transactedAt: 'asc' } });
+  for (let i = 0; i < salesTxns.length; i++) {
+    const t = salesTxns[i];
+    const product = productBySku['SOUR-001'] ?? products[0];
+    await prisma.salesItem.create({
+      data: {
+        salesTransactionId: t.id,
+        productId: product.id,
+        quantitySold: 5 + i,
+        unitPricePaise: 24000,
+        totalLinePaise: (5 + i) * 24000,
+        discountPct: 0,
+        costAtTimePaise: 12000,
       },
-    }),
-    prisma.supplier.upsert({
-      where: { name: 'Feedspan' },
-      update: {},
-      create: {
-        name: 'Feedspan',
-        classification: 'APPROVED',
-        geographyTag: 'Delhi',
-      },
-    }),
-    prisma.supplier.upsert({
-      where: { name: 'Pixonyx' },
-      update: {},
-      create: {
-        name: 'Pixonyx',
-        classification: 'APPROVED',
-        geographyTag: 'Pan-India',
-      },
-    }),
-  ]);
+    });
+  }
+
+  await prisma.wasteRecord.createMany({
+    data: [
+      { locationId: locMum.id, productId: productBySku['SOUR-001'].id, wasteDate: new Date(mockNow.getTime() - 2 * 24 * 60 * 60 * 1000), quantityWasted: 2, financialLossPaise: 24000, damageReason: 'EXPIRED_IN_WAREHOUSE' },
+      { locationId: locMum.id, productId: productBySku['WB-001'].id, wasteDate: new Date(mockNow.getTime() - 4 * 24 * 60 * 60 * 1000), quantityWasted: 3, financialLossPaise: 42000, damageReason: 'OVERORDERING' },
+      { locationId: locMum.id, productId: productBySku['EGG-001'].id, wasteDate: sevenDaysAgo, quantityWasted: 1, financialLossPaise: 6000, damageReason: 'QUALITY_REJECTION' },
+    ],
+    skipDuplicates: true,
+  });
+
+  await prisma.orderFulfilment.createMany({
+    data: [
+      { orderCode: 'ORD-MOCK-001', locationId: locMum.id, channel: 'DIRECT', quantityOrdered: 10, quantityDelivered: 10, fulfilmentRatePct: 1, status: 'DELIVERED', orderedAt: new Date(mockNow.getTime() - 1 * 24 * 60 * 60 * 1000), dispatchedAt: new Date(mockNow.getTime() - 1 * 24 * 60 * 60 * 1000), deliveredAt: new Date(mockNow.getTime() - 1 * 24 * 60 * 60 * 1000) },
+      { orderCode: 'ORD-MOCK-002', locationId: locMum.id, channel: 'ECOMMERCE', quantityOrdered: 20, quantityDelivered: 18, fulfilmentRatePct: 0.9, status: 'DELIVERED', orderedAt: new Date(mockNow.getTime() - 3 * 24 * 60 * 60 * 1000), dispatchedAt: new Date(mockNow.getTime() - 3 * 24 * 60 * 60 * 1000), deliveredAt: new Date(mockNow.getTime() - 3 * 24 * 60 * 60 * 1000) },
+      { orderCode: 'ORD-MOCK-003', locationId: locMum.id, channel: 'DIRECT', quantityOrdered: 15, quantityDelivered: 15, fulfilmentRatePct: 1, status: 'DELIVERED', orderedAt: new Date(mockNow.getTime() - 5 * 24 * 60 * 60 * 1000), dispatchedAt: new Date(mockNow.getTime() - 5 * 24 * 60 * 60 * 1000), deliveredAt: new Date(mockNow.getTime() - 5 * 24 * 60 * 60 * 1000) },
+    ],
+    skipDuplicates: true,
+  });
 
   // 5. TIG Constraints
   const constraints = await prisma.$transaction([

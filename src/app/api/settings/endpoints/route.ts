@@ -86,30 +86,32 @@ export async function POST(req: NextRequest) {
   const encryptedKey =
     apiKey && apiKey.length > 0 ? encryptValue(apiKey) : undefined;
 
-  const endpoint = await prisma.modelEndpoint.upsert({
-    where: {
-      userId_componentType: {
-        userId,
-        componentType,
-      },
-    },
-    update: {
-      label,
-      url,
-      encryptedKey,
-      modelName,
-      isActive: true,
-    },
-    create: {
-      userId,
-      componentType,
-      label,
-      url,
-      encryptedKey: encryptedKey ?? null,
-      modelName: modelName ?? null,
-      isActive: true,
-    },
+  const existing = await prisma.modelEndpoint.findFirst({
+    where: { userId, componentType },
   });
+
+  const endpoint = existing
+    ? await prisma.modelEndpoint.update({
+        where: { id: existing.id },
+        data: {
+          label,
+          url,
+          ...(encryptedKey !== undefined && { encryptedKey }),
+          modelName: modelName ?? null,
+          isActive: true,
+        },
+      })
+    : await prisma.modelEndpoint.create({
+        data: {
+          userId,
+          componentType,
+          label,
+          url,
+          encryptedKey: encryptedKey ?? null,
+          modelName: modelName ?? null,
+          isActive: true,
+        },
+      });
 
   return ok(
     {

@@ -2,9 +2,15 @@ import { NextRequest } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { ok, noContent, errorResponse } from "@/lib/api/response";
 
-const prisma = new PrismaClient();
+function getPrisma(): PrismaClient | null {
+  try {
+    return new PrismaClient();
+  } catch {
+    return null;
+  }
+}
 
-async function resolveUserId(): Promise<string | null> {
+async function resolveUserId(prisma: PrismaClient): Promise<string | null> {
   const user = await prisma.user.findFirst({
     orderBy: { createdAt: "asc" },
   });
@@ -18,9 +24,20 @@ export async function GET(
   const { id } = await context.params;
   const requestId = req.headers.get("x-request-id") ?? undefined;
 
+  const prisma = getPrisma();
+  if (!prisma) {
+    return errorResponse(
+      503,
+      "DB_UNAVAILABLE",
+      "Database not initialized. Run: npx prisma generate",
+      null,
+      requestId,
+    );
+  }
+
   let userId: string | null;
   try {
-    userId = await resolveUserId();
+    userId = await resolveUserId(prisma);
   } catch (err) {
     return errorResponse(
       500,
@@ -93,9 +110,20 @@ export async function DELETE(
   const { id } = await context.params;
   const requestId = req.headers.get("x-request-id") ?? undefined;
 
+  const prisma = getPrisma();
+  if (!prisma) {
+    return errorResponse(
+      503,
+      "DB_UNAVAILABLE",
+      "Database not initialized. Run: npx prisma generate",
+      null,
+      requestId,
+    );
+  }
+
   let userId: string | null;
   try {
-    userId = await resolveUserId();
+    userId = await resolveUserId(prisma);
   } catch (err) {
     return errorResponse(
       500,

@@ -84,17 +84,18 @@ async function getEndpointForUser(
 
   // Fallback to defaults via env
   switch (componentType) {
-    case 'chat_narration':
+    case 'chat_narration': {
+      const key = process.env.DEFAULT_CHAT_LLM_KEY;
+      const url = process.env.DEFAULT_CHAT_LLM_URL ?? (key ? 'https://api.openai.com' : '');
+      const modelName = process.env.DEFAULT_CHAT_MODEL ?? (url.includes('openai.com') ? 'gpt-4o-mini' : 'claude-sonnet-4-6');
       return {
         id: 'default-chat',
         userId,
         componentType,
         label: 'Default Chat Narration',
-        url: process.env.DEFAULT_CHAT_LLM_URL ?? '',
-        encryptedKey: process.env.DEFAULT_CHAT_LLM_KEY
-          ? encryptValue(process.env.DEFAULT_CHAT_LLM_KEY)
-          : null,
-        modelName: process.env.DEFAULT_CHAT_MODEL ?? 'claude-sonnet-4-6',
+        url,
+        encryptedKey: key ? encryptValue(key) : null,
+        modelName,
         isActive: true,
         lastPingMs: null,
         lastPingOk: null,
@@ -102,6 +103,7 @@ async function getEndpointForUser(
         createdAt: new Date(),
         updatedAt: new Date(),
       };
+    }
     case 'analytics_narration':
       return {
         id: 'default-analytics',

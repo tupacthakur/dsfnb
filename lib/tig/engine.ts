@@ -224,12 +224,12 @@ export async function checkConstraints(params: {
     const result = await evaluateConstraint(c, context, weight);
 
     // Log
-        await prisma.tIGCheckLog.create({
+    await prisma.tIGCheckLog.create({
       data: {
         constraintId: c.id,
         checkResult: result.status,
         deviationId: null,
-          contextData: context,
+        contextData: JSON.parse(JSON.stringify(context)),
         confidenceScore: 1.0,
         regimeActive: regime,
       },
@@ -297,8 +297,8 @@ export async function triggerRegimeDetection(
       userId,
       regimeType: RegimeType.SUPPLY_SHOCK,
       status: RegimeStatus.PENDING_CONFIRMATION,
-      triggerSignals: signals,
-      weightOverrides: null,
+      triggerSignals: JSON.parse(JSON.stringify(signals)),
+      weightOverrides: undefined,
     },
   });
 
@@ -307,7 +307,7 @@ export async function triggerRegimeDetection(
       userId,
       type: 'regime_detected',
       description: 'Potential regime shift detected',
-      metadata: signals,
+      metadata: JSON.parse(JSON.stringify(signals)),
       severity: 'warning',
     },
   });
